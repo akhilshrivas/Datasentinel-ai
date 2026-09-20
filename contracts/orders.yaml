@@ -1,0 +1,28 @@
+dataset: orders
+version: 1.0.0
+description: Core orders dataset
+
+columns:
+  - name: order_id
+    type: string
+    nullable: false
+    unique: true
+    description: Primary identifier for an order
+  - name: customer_id
+    type: string
+    nullable: false
+    description: Foreign key to customers
+  - name: order_date
+    type: datetime
+    nullable: false
+  - name: status
+    type: string
+    nullable: false
+    accepted_values:
+      - pending
+      - completed
+      - cancelled
+  - name: total_amount
+    type: float
+    nullable: false
+    minimum: 0.0
