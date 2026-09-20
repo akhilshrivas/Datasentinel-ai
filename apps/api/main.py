@@ -24,6 +24,11 @@ async def lifespan(app: FastAPI):
         print(f"Error initializing DB views: {e}")
     finally:
         con.close()
+        
+    # Validate configuration on startup
+    from agents.orchestrator import check_llm_availability
+    check_llm_availability()
+        
     yield
 
 app = FastAPI(title="DataSentinel API", lifespan=lifespan)
@@ -48,7 +53,7 @@ def get_quality_latest():
         con.close()
         return [dict(zip(cols, row)) for row in res]
     except Exception as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/anomalies")
 def get_anomalies():
@@ -59,24 +64,32 @@ def get_anomalies():
         con.close()
         return [dict(zip(cols, row)) for row in res]
     except Exception as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
-from agents.orchestrator import create_agent
+from agents.orchestrator import create_agent, get_llm, investigate_incident
 
 @app.post("/agent/chat")
 def agent_chat(request: QueryRequest):
     try:
-        agent = create_agent()
-        response = agent.run(request.query)
-        return {"reply": response, "tool_calls": []}
+        result = investigate_incident(request.query)
+        if "Error:" in result["reply"]:
+            raise HTTPException(status_code=500, detail=result["reply"])
+        return result
+    except HTTPException:
+        raise
     except Exception as e:
-        return {"reply": f"Error: {str(e)}", "tool_calls": []}
+        print(f"Agent execution failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal Agent Error: {str(e)}")
 
 @app.post("/agent/investigate")
 def agent_investigate(incident_id: str, query: str):
-    from agents.orchestrator import investigate_incident
     try:
-        response = investigate_incident(query)
-        return {"incident_id": incident_id, "summary": response}
+        result = investigate_incident(query)
+        if "Error:" in result["reply"]:
+            raise HTTPException(status_code=500, detail=result["reply"])
+        return {"incident_id": incident_id, "summary": result["reply"]}
+    except HTTPException:
+        raise
     except Exception as e:
-        return {"error": str(e)}
+        print(f"Agent execution failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
