@@ -55,3 +55,36 @@ def test_no_hallucinated_metrics():
         assert "20%" not in reply
         assert "1000" not in reply
         assert "5.0" in reply or "5" in reply
+
+def test_stale_pipeline_metadata():
+    with patch("agents.orchestrator.get_latest_anomalies") as mock_anomalies, \
+         patch("agents.orchestrator.get_pipeline_status") as mock_pipeline, \
+         patch("agents.orchestrator.get_latest_quality_results") as mock_quality, \
+         patch("agents.orchestrator.check_data_freshness") as mock_freshness:
+         
+        mock_anomalies.return_value = {"status": "anomaly_detected", "metric": "revenue", "timestamp": "2023-10-25T10:00:00Z"}
+        mock_pipeline.return_value = {"status": "healthy"}
+        mock_quality.return_value = {"status": "passed"}
+        mock_freshness.return_value = {"status": "STALE", "expected_freshness": ">= 2023-10-25T10:00:00Z", "observed_latest_run": "2023-10-24T10:00:00Z", "age_seconds": 86400}
+        
+        result = investigate_incident("Check if the data is fresh for the 2023-10-25 anomaly.")
+        reply = result["reply"]
+        
+        assert "STALE" in reply or "stale" in reply.lower()
+        assert "2023-10-24" in reply
+
+def test_anomaly_pipeline_timestamp_mismatch():
+    with patch("agents.orchestrator.get_latest_anomalies") as mock_anomalies, \
+         patch("agents.orchestrator.get_pipeline_status") as mock_pipeline, \
+         patch("agents.orchestrator.get_latest_quality_results") as mock_quality, \
+         patch("agents.orchestrator.check_data_freshness") as mock_freshness:
+         
+        mock_anomalies.return_value = {"status": "anomaly_detected", "metric": "revenue", "timestamp": "2023-10-25T10:00:00Z"}
+        mock_pipeline.return_value = {"status": "healthy"}
+        mock_quality.return_value = {"status": "passed"}
+        mock_freshness.return_value = {"status": "FRESH"}
+        
+        result = investigate_incident("Is the data fresh for the 2023-10-25 anomaly?")
+        reply = result["reply"]
+        
+        assert "FRESH" in reply or "fresh" in reply.lower()

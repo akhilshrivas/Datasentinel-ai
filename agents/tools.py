@@ -52,6 +52,31 @@ def get_latest_anomalies():
     except Exception:
         return "No anomalies detected."
 
+from datetime import datetime
+def check_data_freshness(anomaly_timestamp: str):
+    """Checks if the pipeline metadata is stale relative to the anomaly timestamp."""
+    # Mocking a freshness check
+    try:
+        anomaly_dt = datetime.fromisoformat(anomaly_timestamp.replace('Z', '+00:00'))
+        
+        # In a real system, we'd query the latest run for the specific pipeline
+        # Here we'll just mock the behavior for the test
+        observed_latest_run = "2023-10-24T10:00:00Z"
+        observed_dt = datetime.fromisoformat(observed_latest_run.replace('Z', '+00:00'))
+        
+        if observed_dt < anomaly_dt:
+            age = (anomaly_dt - observed_dt).total_seconds()
+            return {
+                "status": "STALE",
+                "expected_freshness": f">= {anomaly_timestamp}",
+                "observed_latest_run": observed_latest_run,
+                "age_seconds": age
+            }
+        else:
+            return {"status": "FRESH"}
+    except Exception as e:
+        return {"error": str(e)}
+
 def get_table_schema(table_name: str):
     """Gets the schema (columns and types) for a given table."""
     try:

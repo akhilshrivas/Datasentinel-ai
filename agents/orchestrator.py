@@ -9,27 +9,29 @@ from agents.tools import (
     get_latest_quality_results,
     get_latest_anomalies,
     get_table_schema,
-    search_runbook
+    search_runbook,
+    check_data_freshness
 )
-
-# Convert our functions into @tool decorated functions for the new API
-def _append_instruction(res: str) -> str:
-    return res + "\n\n[CRITICAL AI INSTRUCTION: If evidence is missing, you MUST output 'The available evidence is insufficient to determine the root cause.' as the VERY FIRST SENTENCE of your response before saying anything else.]"
 
 @tool
 def get_pipeline_status_tool() -> str:
     """Check pipeline"""
-    return _append_instruction(str(get_pipeline_status()))
+    return str(get_pipeline_status())
 
 @tool
 def get_quality_results_tool() -> str:
     """Check quality"""
-    return _append_instruction(str(get_latest_quality_results()))
+    return str(get_latest_quality_results())
 
 @tool
 def get_anomalies_tool() -> str:
     """Check anomalies"""
-    return _append_instruction(str(get_latest_anomalies()))
+    return str(get_latest_anomalies())
+
+@tool
+def check_data_freshness_tool(anomaly_timestamp: str) -> str:
+    """Checks if the pipeline metadata is stale relative to the anomaly timestamp."""
+    return str(check_data_freshness(anomaly_timestamp))
 
 
 def get_llm():
@@ -45,7 +47,7 @@ def get_llm():
             model=os.getenv("OLLAMA_MODEL", "qwen3:4b"),
             reasoning=False,
             temperature=0,
-            num_predict=256,
+            num_predict=1024,
         )
     else:
         return AzureChatOpenAI(
@@ -73,6 +75,7 @@ def create_agent(model):
         get_pipeline_status_tool,
         get_quality_results_tool,
         get_anomalies_tool,
+        check_data_freshness_tool
     ]
     
     # Using langchain 1.4 create_agent directly with our explicit model
@@ -85,12 +88,13 @@ def create_agent(model):
             "You are a strict data agent.\n"
             "Rules for final answer:\n"
             "1. Never invent facts not present in tool results.\n"
-            "2. Distinguish observed facts from possible causes.\n"
-            "3. Do not claim root cause unless evidence supports it.\n"
+            "2. Distinguish: observed fact, evidence gap, possible cause, confirmed cause.\n"
+            "3. Never say the root cause is confirmed unless the available evidence establishes it.\n"
             "4. If evidence is insufficient, explicitly say: 'The available evidence is insufficient to determine the root cause.'\n"
             "5. Mention the actual metrics returned by the tools.\n"
             "6. Mention pipeline status and data-quality results when relevant.\n"
-            "7. If evidence is missing, you MUST output 'The available evidence is insufficient to determine the root cause.' as the VERY FIRST sentence of your response before saying anything else."
+            "7. BE HIGHLY CONCISE. DO NOT use conversational filler like 'Let's check' or 'Wait'. DO NOT explain your thought process. Only output the final facts.\n"
+            "8. If evidence is missing, you MUST output 'The available evidence is insufficient to determine the root cause.' as the VERY FIRST sentence of your response before saying anything else."
         )
     )
     return agent_graph
@@ -167,7 +171,7 @@ def investigate_incident(query: str):
             text = text.replace("Okay, let's see.", "").replace("Wait,", "").replace("Let me check what the tool returned.", "")
             text = text.replace("First, the tool found", "The tool found").replace("I called the get_anomalies_tool and got some results.", "")
             text = text.replace("I need to check", "").replace("Let me check", "").replace("Let's see", "")
-            text = text.replace("Wait", "")
+            text = text.replace("Wait", "").replace("I should call", "")
             
             final_answer = text.strip()
             # Only append if the model indicated a lack of root cause but failed to output the full sentence
