@@ -1,3 +1,4 @@
+import pytest
 import os
 import sys
 
@@ -7,6 +8,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from agents.orchestrator import get_llm, get_anomalies_tool
 from langchain_core.messages import HumanMessage
 
+@pytest.mark.integration
 def test_real_tool_call():
     print("Testing real tool call with LLM directly...")
     
@@ -39,3 +41,4 @@ def test_real_tool_call():
 if __name__ == "__main__":
     test_real_tool_call()
     print("ALL TESTS PASSED: test_real_tool_call.py")
+

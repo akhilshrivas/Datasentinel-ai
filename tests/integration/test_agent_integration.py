@@ -1,3 +1,4 @@
+import pytest
 import os
 import sys
 
@@ -6,6 +7,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agents.orchestrator import investigate_incident
 
+@pytest.mark.integration
 def test_agent_integration():
     print("Testing full agent investigation loop...")
     
@@ -36,3 +38,4 @@ def test_agent_integration():
 if __name__ == "__main__":
     test_agent_integration()
     print("ALL TESTS PASSED: test_agent.py")
+
