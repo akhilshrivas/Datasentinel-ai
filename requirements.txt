@@ -1,14 +1,11 @@
 fastapi
 uvicorn
 pydantic
-sqlalchemy
-psycopg2-binary
 polars
 pandas
 duckdb
 pyarrow
 pyyaml
-scikit-learn
 pytest
 flake8
 black

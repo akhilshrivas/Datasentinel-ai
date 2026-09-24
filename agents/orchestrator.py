@@ -1,51 +1,60 @@
 import os
-from langchain_openai import AzureChatOpenAI
+import re
+import time
+from datetime import datetime
 from langchain_ollama import ChatOllama
-from langchain.agents import create_agent
+from langchain_openai import AzureChatOpenAI
+from langchain.agents import create_agent as langchain_create_agent
 from langchain.tools import tool
+from langgraph.errors import GraphRecursionError
+
 from agents.tools import (
-    run_readonly_sql,
     get_pipeline_status,
     get_latest_quality_results,
     get_latest_anomalies,
-    get_table_schema,
-    search_runbook,
-    check_data_freshness
+    get_revenue_and_metrics,
+    get_platform_summary
 )
+
+# ---
+# Readonly Tools
+# ---
 
 @tool
 def get_pipeline_status_tool() -> str:
     """Check pipeline"""
-    return str(get_pipeline_status())
+    return get_pipeline_status()
 
 @tool
 def get_quality_results_tool() -> str:
     """Check quality"""
-    return str(get_latest_quality_results())
+    return get_latest_quality_results()
 
 @tool
 def get_anomalies_tool() -> str:
     """Check anomalies"""
-    return str(get_latest_anomalies())
+    return get_latest_anomalies()
 
 @tool
-def check_data_freshness_tool(anomaly_timestamp: str) -> str:
-    """Checks if the pipeline metadata is stale relative to the anomaly timestamp."""
-    return str(check_data_freshness(anomaly_timestamp))
+def get_revenue_and_metrics_tool() -> str:
+    """Check revenue and business metrics"""
+    return get_revenue_and_metrics()
+
+@tool
+def get_platform_summary_tool() -> str:
+    """Check overall platform summary"""
+    return get_platform_summary()
 
 
 def get_llm():
     provider = os.getenv("AI_PROVIDER", "ollama")
     if provider == "ollama":
         url = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
-        # Removing /v1 since ChatOllama handles the native endpoint automatically
         if url.endswith("/v1"):
             url = url[:-3]
-            
         return ChatOllama(
             base_url=url,
             model=os.getenv("OLLAMA_MODEL", "qwen3:4b"),
-            reasoning=False,
             temperature=0,
             num_predict=1024,
         )
@@ -58,7 +67,6 @@ def get_llm():
         )
 
 def check_llm_availability():
-    """Validates the LLM provider on startup."""
     provider = os.getenv("AI_PROVIDER", "ollama")
     if provider == "ollama":
         import httpx
@@ -69,122 +77,174 @@ def check_llm_availability():
         except Exception as e:
             raise RuntimeError(f"Ollama provider is configured but unavailable at {url}: {e}")
 
-def create_agent(model):
-    """Creates the agent graph by explicitly passing the model."""
+# ---
+# Sanitization
+# ---
+
+def strip_reasoning(text: str) -> str:
+    """Strictly remove think blocks and reasoning traces."""
+    if not text:
+        return ""
+    
+    match = re.search(r'<ANSWER>(.*?)</ANSWER>', text, flags=re.DOTALL | re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+        
+    text = re.sub(r'<think>.*?(</think>|$)', '', text, flags=re.DOTALL | re.IGNORECASE)
+    
+    thinking_patterns = [
+        r'^(Hmm|Okay|Let me|First,? I|I need to|Wait|So,? the|Alright|We are|Based on).*?(?=\n\n|\n[A-Z]|$)',
+        r'To answer this question, I need to.*?(?=\n\n|$)',
+        r'I should call the .*? tool.*?(?=\n\n|$)',
+        r'Calling tool.*?(?=\n\n|$)',
+        r'Let\'s look at the.*?(?=\n\n|$)',
+        r'I will use the.*?(?=\n\n|$)',
+        r'The user wants to know.*?(?=\n\n|$)',
+        r'Based on the tool output,.*?\n'
+    ]
+    for pattern in thinking_patterns:
+        text = re.sub(pattern, '', text, flags=re.DOTALL | re.IGNORECASE)
+
+    text = re.sub(r'\n{3,}', '\n\n', text).strip()
+    return text
+
+# ---
+# Deterministic Routing
+# ---
+
+def route_query(query: str):
+    q = query.lower()
+    if "pipeline" in q:
+        return {"tool_name": "get_pipeline_status_tool", "tool_fn": get_pipeline_status}
+    if "anomal" in q:
+        return {"tool_name": "get_anomalies_tool", "tool_fn": get_latest_anomalies}
+    if "revenue" in q or "metric" in q or "order" in q:
+        return {"tool_name": "get_revenue_and_metrics_tool", "tool_fn": get_revenue_and_metrics}
+    if "quality" in q:
+        return {"tool_name": "get_quality_results_tool", "tool_fn": get_latest_quality_results}
+    if "summary" in q or "platform" in q:
+        return {"tool_name": "get_platform_summary_tool", "tool_fn": get_platform_summary}
+    return None
+
+def _fallback_summary(tool_name, tool_data):
+    if isinstance(tool_data, list):
+        count = len(tool_data)
+        if tool_name == "get_pipeline_status_tool":
+            if not tool_data: return "No pipeline runs found."
+            def parse_time(ts):
+                if not ts: return datetime.min
+                try: return datetime.fromisoformat(ts[:19].replace("Z", ""))
+                except Exception: return datetime.min
+            
+            sorted_runs = sorted([r for r in tool_data if isinstance(r, dict)], 
+                               key=lambda x: parse_time(x.get("start_time")), reverse=True)
+            if not sorted_runs: return "No valid pipeline runs found."
+            
+            latest = sorted_runs[0]
+            start_dt = parse_time(latest.get("start_time"))
+            fmt_time = start_dt.strftime("%I:%M:%S %p") if start_dt != datetime.min else "Unknown time"
+            
+            status = latest.get("status", "Unknown")
+            msg = f"The latest pipeline run started at {fmt_time} and {status.lower()}."
+            
+            if status == "Failed":
+                reason = latest.get("failure_reason", {})
+                if isinstance(reason, dict): reason = reason.get("message", "Unknown error")
+                msg += f" Failure reason: {reason}"
+                
+            prev_failed = [r for r in sorted_runs[1:] if r.get("status") == "Failed"]
+            if prev_failed and status != "Failed":
+                prev_reason = prev_failed[0].get("failure_reason", {})
+                if isinstance(prev_reason, dict): prev_reason = prev_reason.get("message", "Unknown")
+                short_reason = "Spark capacity limit" if "capacity" in str(prev_reason).lower() else str(prev_reason)[:100]
+                msg += f" (Note: A previous run failed due to {short_reason})."
+            return msg
+
+        elif tool_name == "get_anomalies_tool":
+            return f"{count} anomalies detected in the current window."
+        elif tool_name == "get_quality_results_tool":
+            passed = [r for r in tool_data if isinstance(r, dict) and r.get("status") == "passed"]
+            return f"{count} tables checked. {len(passed)} passed validation."
+        return f"Tool returned {count} records."
+    
+    elif isinstance(tool_data, dict):
+        if tool_name == "get_platform_summary_tool":
+            return (f"Status: {tool_data.get('status', 'N/A')}\\n"
+                    f"Pipelines: {tool_data.get('active_pipelines', 'N/A')}\\n"
+                    f"Reliability: {tool_data.get('reliability_score', 'N/A')}%\\n"
+                    f"Incident Count: {tool_data.get('incident_count', 'N/A')}")
+        kpis = tool_data.get("kpis", {})
+        if kpis:
+            return (f"Total Orders: {kpis.get('total_orders', 'N/A')}\\n"
+                    f"Revenue: ${kpis.get('total_revenue', 0):,.2f}\\n"
+                    f"AOV: ${kpis.get('average_order_value', 0):,.2f}\\n"
+                    f"Unique Customers: {kpis.get('unique_customers', 'N/A')}\\n"
+                    f"Period: {kpis.get('period_label', 'N/A')}")
+        return "Command completed successfully."
+    return "Data retrieved successfully."
+
+
+def _handle_routed_query(query, route, start):
+    tool_name = route["tool_name"]
+    try:
+        tool_data = route["tool_fn"]()
+    except Exception as e:
+        return {"reply": f"Tool execution failed: {str(e)}", "tool_calls": [{"name": tool_name, "arguments": {}, "status": "error"}]}
+    
+    tool_calls = [{"name": tool_name, "arguments": {}, "status": "success"}]
+    answer = _fallback_summary(tool_name, tool_data)
+    return {"reply": answer, "tool_calls": tool_calls}
+
+
+def _handle_agent_fallback(query, start):
+    llm = get_llm()
     tools = [
         get_pipeline_status_tool,
         get_quality_results_tool,
         get_anomalies_tool,
-        check_data_freshness_tool
+        get_revenue_and_metrics_tool,
+        get_platform_summary_tool,
     ]
     
-    # Using langchain 1.4 create_agent directly with our explicit model
-    from langchain.agents import create_agent as langchain_create_agent
-    
-    agent_graph = langchain_create_agent(
-        model=model,
+    agent = langchain_create_agent(
+        model=llm,
         tools=tools,
-        system_prompt=(
-            "You are a strict data agent.\n"
-            "Rules for final answer:\n"
-            "1. Never invent facts not present in tool results.\n"
-            "2. Distinguish: observed fact, evidence gap, possible cause, confirmed cause.\n"
-            "3. Never say the root cause is confirmed unless the available evidence establishes it.\n"
-            "4. If evidence is insufficient, explicitly say: 'The available evidence is insufficient to determine the root cause.'\n"
-            "5. Mention the actual metrics returned by the tools.\n"
-            "6. Mention pipeline status and data-quality results when relevant.\n"
-            "7. BE HIGHLY CONCISE. DO NOT use conversational filler like 'Let's check' or 'Wait'. DO NOT explain your thought process. Only output the final facts.\n"
-            "8. If evidence is missing, you MUST output 'The available evidence is insufficient to determine the root cause.' as the VERY FIRST sentence of your response before saying anything else."
-        )
+        prompt="You are a strict data agent. /nothinking\nCall at most ONE tool. Output ONLY the final answer."
     )
-    return agent_graph
-
-def investigate_incident(query: str):
-    llm = get_llm()
-    agent = create_agent(llm)
-    inputs = {"messages": [
-        {"role": "user", "content": f"Investigate this issue: {query}"},
-        {"role": "assistant", "content": "I will call get_anomalies_tool now."}
-    ]}
     
-    print("AGENT_START")
-    config = {"recursion_limit": 10}
-    
+    inputs = {"messages": [{"role": "user", "content": query}]}
     final_messages = []
     executed_tool_calls = []
     
-    from langgraph.errors import GraphRecursionError
     try:
-        for chunk in agent.stream(inputs, config=config, stream_mode="updates"):
+        for chunk in agent.stream(inputs, config={"recursion_limit": 2}, stream_mode="updates"):
             for node_name, state_update in chunk.items():
-                if node_name in ["agent", "model"]:
-                    print("MODEL_CALL")
-                    messages = state_update.get("messages", [])
-                    if messages:
-                        final_messages.extend(messages)
-                        msg = messages[-1]
-                        if hasattr(msg, "tool_calls") and msg.tool_calls:
-                            for tc in msg.tool_calls:
-                                print(f"TOOL_CALL: {tc['name']}")
-                elif node_name == "tools":
-                    print("TOOL_RESULT")
-                    messages = state_update.get("messages", [])
-                    if messages:
-                        final_messages.extend(messages)
-                        # We capture the tool message to know it executed
+                messages = state_update.get("messages", [])
+                if messages:
+                    final_messages.extend(messages)
+                    if node_name == "tools":
                         for msg in messages:
-                            if msg.type == "tool":
-                                executed_tool_calls.append({
-                                    "name": msg.name,
-                                    "arguments": {} # Not deeply inspecting args from ToolMessage directly, we can map it if needed
-                                })
+                            if getattr(msg, "type", "") == "tool":
+                                executed_tool_calls.append({"name": msg.name, "arguments": {}, "status": "success"})
     except GraphRecursionError:
-        print("AGENT_END (FAILED: Recursion Limit Reached)")
-        return {"reply": "Error: Agent execution limit reached.", "tool_calls": executed_tool_calls}
+        pass
     except Exception as e:
-        print(f"AGENT_END (FAILED: {str(e)})")
-        return {"reply": f"Error: Agent execution failed: {str(e)}", "tool_calls": executed_tool_calls}
-        
-    print("AGENT_END")
-    
-    # Map the actual executed tools back to their arguments from the AI messages
-    # We only include tool calls that actually have a matching ToolMessage result
-    validated_tool_calls = []
-    executed_names = [tc["name"] for tc in executed_tool_calls]
-    
-    for msg in final_messages:
-        if msg.type == "ai" and hasattr(msg, "tool_calls") and msg.tool_calls:
-            for tc in msg.tool_calls:
-                if tc["name"] in executed_names:
-                    validated_tool_calls.append({
-                        "name": tc["name"],
-                        "arguments": tc.get("args", {})
-                    })
-                    # Remove from executed_names to handle duplicates properly
-                    executed_names.remove(tc["name"])
+        return {"reply": f"Agent error: {str(e)}", "tool_calls": executed_tool_calls}
 
-    final_answer = "No response generated."
+    answer = "No response generated."
     for msg in reversed(final_messages):
-        if msg.type == "ai" and msg.content:
-            text = msg.content
-            # Strip common Qwen conversational fillers from final answer
-            text = text.replace("Okay, let's see.", "").replace("Wait,", "").replace("Let me check what the tool returned.", "")
-            text = text.replace("First, the tool found", "The tool found").replace("I called the get_anomalies_tool and got some results.", "")
-            text = text.replace("I need to check", "").replace("Let me check", "").replace("Let's see", "")
-            text = text.replace("Wait", "").replace("I should call", "")
-            
-            final_answer = text.strip()
-            # Only append if the model indicated a lack of root cause but failed to output the full sentence
-            if "no_anomalies" in text.lower() or "no anomalies" in text.lower() or "insufficient" in text.lower():
-                if "insufficient to determine the root cause" not in final_answer.lower():
-                    final_answer += "\nThe available evidence is insufficient to determine the root cause."
-            break
-            
-    return {
-        "reply": final_answer,
-        "tool_calls": validated_tool_calls
-    }
+        if getattr(msg, "type", "") == "ai" and msg.content:
+            cleaned = strip_reasoning(msg.content)
+            if cleaned:
+                answer = cleaned
+                break
+                
+    return {"reply": answer, "tool_calls": executed_tool_calls}
 
-if __name__ == "__main__":
-    # Test
-    print(investigate_incident("Why did revenue drop yesterday?"))
+
+def investigate_incident(query: str):
+    start = time.time()
+    route = route_query(query)
+    if route:
+        return _handle_routed_query(query, route, start)
+    return _handle_agent_fallback(query, start)

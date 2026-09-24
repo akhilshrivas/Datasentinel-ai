@@ -1,24 +1,61 @@
-# DataSentinel AI — Agentic Data Reliability & Analytics Platform
+# DataPulse AI
 
-## Project Overview
-DataSentinel AI is a production-grade data platform demonstrating a complete Bronze/Silver/Gold architecture, data quality enforcement, anomaly detection, and an AI Agent capable of querying data and investigating pipeline incidents. Designed around Azure for Students free-tier services, the core application can also run entirely locally with zero paid API dependencies.
+DataPulse AI (formerly DataSentinel) is an intelligent data-platform operations console powered by Agentic AI. It provides a centralized dashboard and AI-driven investigation tool to monitor data pipelines, track anomalies, measure data quality, and visualize data lineage across enterprise architectures.
 
-## Business Problem
-Modern data platforms suffer from silent data failures, schema drift, and unexplainable metrics. When dashboards break, data engineers spend hours manually querying raw tables, checking pipeline logs, and digging through runbooks. 
+## 🚀 Key Features
+- **AI-Powered Investigations**: Ask natural language questions (e.g., "What happened in the latest pipeline run?") and get deterministic, actionable answers.
+- **Data Lineage Graph**: Interactive visualization of data flowing from Source → Bronze → Silver → Gold layers, including real-time event streams.
+- **Real-Time Anomaly Detection**: Monitor event streams and identify detected anomalies instantly.
+- **Data Quality Gates**: Track table-level data quality constraints (PK violations, nulls, duplicates) in real-time.
 
-DataSentinel AI solves this by:
-1. Guaranteeing data quality with explicit contracts.
-2. Automatically detecting anomalies in metrics.
-3. Providing an AI agent to investigate failures and answer business questions via a read-only SQL tool and local RAG over documentation.
+## 🛠️ Tech Stack
+### Frontend
+- **React 19** & **Vite**: Ultra-fast UI rendering.
+- **Lucide-React** & **Recharts**: Modern iconography and interactive telemetry charts.
+- **Custom CSS**: Lightweight, utility-free modular styling with native CSS variables.
 
-## Architecture
-See `docs/architecture/ADR-001-storage-architecture.md` and related documents.
+### Backend & AI
+- **FastAPI** (Python): High-performance REST API.
+- **LangChain & LangGraph**: AI agent orchestration with strict deterministic routing for operational queries.
+- **Local AI / LLMs**: Seamless support for local models (via Ollama) or cloud providers (Azure OpenAI).
 
-## Local Setup
-1. Clone the repository.
-2. Copy `.env.example` to `.env`.
-3. Run `make setup`.
-4. Run `make demo` for a full end-to-end flow.
+### Data Layer
+- **Microsoft Fabric (Production)**: Native integration with Fabric Lakehouse (Delta), Eventstream, Eventhouse (KQL), and Data Factory via PyODBC and Azure Entra ID.
+- **DuckDB (Local Dev)**: Fallback local execution mode using Polars and Parquet files for offline zero-cost development.
 
-## Demo Scenario
-The `make demo` command orchestrates the complete flow: generating sample data, ingesting it, applying quality checks, calculating metrics, and triggering the AI assistant to analyze a simulated failure.
+## ⚙️ Quick Start
+
+### 1. Environment Setup
+Configure your environment variables. Ensure no secrets are hardcoded.
+```bash
+# Frontend
+cp apps/web/.env.example apps/web/.env
+
+# Backend
+# Configure EXECUTION_MODE=fabric or local in your backend environment.
+```
+
+### 2. Backend (FastAPI)
+```bash
+# Create and activate virtual environment
+python -m venv venv
+source venv/bin/activate  # (or venv\\Scripts\\activate on Windows)
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the API server
+uvicorn apps.api.main:app --host 127.0.0.1 --port 8000
+```
+
+### 3. Frontend (React/Vite)
+```bash
+cd apps/web
+npm install
+npm run dev
+```
+The dashboard will be available at `http://localhost:5173`.
+
+## 🔒 Security & Safe AI
+- **Zero Secrets Committed**: All credentials (Tokens, Azure Entra IDs, API Keys) are strictly injected via `.env`.
+- **Sanitized AI Outputs**: The backend aggressively strips `<think>` tokens and reasoning logic before resolving data to the UI, ensuring clean, production-safe responses.
