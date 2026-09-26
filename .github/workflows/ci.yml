@@ -39,8 +39,23 @@ jobs:
     - name: Terraform Validate
       run: terraform validate
       working-directory: ./infra/terraform
+    - name: Check Azure credentials
+      id: azure-creds
+      run: |
+        if [ -n "$ARM_CLIENT_ID" ] && [ -n "$ARM_CLIENT_SECRET" ] && [ -n "$ARM_SUBSCRIPTION_ID" ] && [ -n "$ARM_TENANT_ID" ]; then
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+          echo "::warning::Skipping terraform plan because Azure credentials are not configured."
+        fi
+      env:
+        ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
     - name: Terraform Plan
-      run: terraform plan
+      if: steps.azure-creds.outputs.ready == 'true'
+      run: terraform plan -input=false
       working-directory: ./infra/terraform
       env:
         ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
