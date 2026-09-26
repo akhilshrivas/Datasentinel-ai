@@ -1,7 +1,7 @@
 import os
 import pytest
 from unittest.mock import patch, MagicMock
-from agents.orchestrator import get_llm, create_agent, check_llm_availability
+from agents.orchestrator import get_llm, check_llm_availability
 from agents.tools import run_readonly_sql
 
 def test_model_initialization_ollama():
@@ -21,11 +21,6 @@ def test_model_initialization_azure():
         # Verify it instantiated ChatOpenAI with azure configs
         assert hasattr(llm, "azure_endpoint") or getattr(llm, "deployment_name", None) == "gpt-4"
 
-def test_agent_creation():
-    llm = MagicMock()
-    agent = create_agent(llm)
-    assert agent is not None
-    # Agent should have our tools mapped
     
 def test_provider_configuration_validation_success():
     with patch.dict(os.environ, {"AI_PROVIDER": "ollama", "OLLAMA_API_URL": "http://localhost:11434/v1"}):

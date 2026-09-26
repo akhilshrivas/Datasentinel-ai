@@ -1,52 +1,36 @@
-# DataSentinel AI - Project Status
+# DataPulse AI - Project Status
 
 ## Implemented Features
 - [x] Phase 1: Repository architecture and base configuration (Makefile, Docker, etc.)
 - [x] Phase 2: Synthetic Data Generation (`customers`, `products`, `orders`, etc.)
-- [x] Phase 3: Bronze/Silver/Gold Pipeline using Polars
+- [x] Phase 3: Bronze/Silver/Gold Pipeline using Microsoft Fabric Lakehouse (Delta)
 - [x] Phase 4: Data Contracts (`orders.yaml`) and Data Quality Engine
-- [x] Phase 5: Anomaly Detection (Statistical Z-score on Daily Revenue)
-- [x] Phase 6: SQL Analytics API (FastAPI + DuckDB)
+- [x] Phase 5: Anomaly Detection (Statistical Z-score & Real-time KQL Eventhouse)
+- [x] Phase 6: SQL Analytics API (FastAPI + Fabric PyODBC)
 - [x] Phase 7: RAG Knowledge Indexer (FAISS + Langchain)
-- [x] Phase 8: AI Agent Tools (Pipeline status, Quality, Anomalies, Read-only SQL)
-- [x] Phase 9: AI Agent Orchestration (ReAct architecture)
-- [x] Phase 10: React Frontend Setup (Vite scaffolding)
-- [x] Phase 11: Observability / Failure Injection Scripts
-- [x] Phase 13: Terraform Definitions (Azure Storage, Container Apps)
-- [x] Phase 14: GitHub Actions CI/CD Pipeline
-- [x] Phase 15: Full End-to-End Demo Script (`demo.py`)
+- [x] Phase 8: AI Agent Tools (Pipeline status, Quality, Anomalies, Business Metrics)
+- [x] Phase 9: AI Agent Orchestration (LangGraph + Deterministic Tool Routing)
+- [x] Phase 10: React Data Lineage & Operations Console
+- [x] Phase 11: Real-Time Eventstream simulator (`event_simulator.py`)
+- [x] Phase 12: Azure Infrastructure Provisioning Definitions (Terraform)
+- [x] Phase 13: GitHub Actions CI/CD Pipeline
 
-## Tested Features
-- Python tool execution flows created. E2E test runs successfully upon `pip install` completion.
+## Core Architecture
+- **Data Engine**: Microsoft Fabric Lakehouse (Delta Tables), Eventstream, Eventhouse (KQL), Azure Data Factory.
+- **Serving Layer**: FastAPI querying Lakehouse natively via PyODBC & Entra ID.
+- **Frontend Layer**: React 19 + Vite dashboard resolving 28 nodes and 35 edges in deterministic lineage.
+- **AI Agent**: LangGraph operational assistant with strict zero-leakage reasoning, safely rendering deterministic charts and JSON telemetry.
 
-## Azure Resources
-- Storage Account (Standard LRS)
-- Log Analytics Workspace (Free Tier)
-- Container Apps Environment (Serverless)
-- *All configured within Free Tier / Azure for Students limits*
-
-## Free-Tier Assumptions
-- No VM/AKS deployment
-- Uses local Parquet instead of paid DB for raw storage
-- Uses DuckDB for API serving without DB limits
-- Azure ML / Synapse are avoided entirely. 
-- Container Apps is utilized under free grants.
+## Commands to Run
+1. `pip install -r requirements.txt` - Installs Python dependencies
+2. `npm run dev` (in `apps/web`) - Starts the React dashboard
+3. `uvicorn apps.api.main:app` - Starts the FastAPI server
 
 ## Known Limitations
 - Data schema drift tests are basic and check for missing columns.
-- Anomaly detection uses simple Z-score, but extensible.
-- AI Agent requires LLM Provider credentials to execute tool calls completely.
+- AI Agent requires LLM Provider credentials to execute advanced conversational fallback flows.
 
-## Commands to Run
-1. `make setup` - Installs Python dependencies
-2. `make demo` - Runs the complete synthetic data → Bronze/Silver/Gold → Quality checks → Anomaly Detection → Failure Injection loop.
-3. `make api` - Starts the FastAPI server querying the DuckDB backend
-4. `make frontend` - Starts the React dashboard.
-
-## Demo Scenario
-The `demo.py` script orchestrates data creation, pipeline runs, validates data quality, detects baseline anomalies, and intentionally injects a revenue drop failure. The API exposes this for the Agent to investigate using its tools.
-
-## Future Enhancements
-- Switch from local FAISS to Azure AI Search Free Tier for remote document retrieval.
-- Deploy Postgres / Azure SQL Serverless to augment DuckDB.
-- Connect real-time streaming endpoint to the frontend dashboard.
+## Completed Enhancements
+- Migrated from local Parquet/DuckDB to Enterprise Microsoft Fabric Cloud.
+- Connected real-time streaming endpoints directly to the frontend Anomalies dashboard.
+- Secured AI responses strictly replacing hallucinatory reasoning blocks with deterministic tools.

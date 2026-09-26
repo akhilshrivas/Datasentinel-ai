@@ -10,24 +10,13 @@ from azure.identity import AzureCliCredential
 
 EXECUTION_MODE = os.environ.get("EXECUTION_MODE", "local").lower()
 
-FABRIC_SERVER = os.environ.get(
-    "FABRIC_SERVER",
-    "nzjdbrqs77kupaq2ajaj4plolu-5z3a2bhrwrvu7fp3emdned4oo4.datawarehouse.fabric.microsoft.com",
-)
-
-FABRIC_DATABASE = os.environ.get(
-    "FABRIC_DATABASE",
-    "DataSentinel_Lakehouse",
-)
-
-FABRIC_TENANT_ID = os.environ.get(
-    "FABRIC_TENANT_ID",
-    "c630526e-ff12-47d5-821a-02409e3d6e5d",
-)
-
-FABRIC_WORKSPACE_ID = "040d76ee-b4f1-4f6b-95fb-2306d20f8e77"
-FABRIC_EVENTHOUSE_ID = "9a8e0481-fdd4-4c66-8dee-9e99f0dfdd67"
-FABRIC_KQL_DATABASE = "DataSentinel_Eventhouse"
+FABRIC_SERVER = os.environ.get("FABRIC_SERVER")
+FABRIC_DATABASE = os.environ.get("FABRIC_DATABASE")
+FABRIC_TENANT_ID = os.environ.get("FABRIC_TENANT_ID")
+FABRIC_WORKSPACE_ID = os.environ.get("FABRIC_WORKSPACE_ID")
+FABRIC_EVENTHOUSE_ID = os.environ.get("FABRIC_EVENTHOUSE_ID")
+FABRIC_KQL_DATABASE = os.environ.get("FABRIC_KQL_DATABASE")
+FABRIC_PIPELINE_ID = os.environ.get("FABRIC_PIPELINE_ID")
 
 
 class DataProvider:
@@ -147,6 +136,20 @@ class FabricProvider(DataProvider):
     SQL_COPT_SS_ACCESS_TOKEN = 1256
 
     def __init__(self):
+        missing = [
+            var for var, val in {
+                "FABRIC_SERVER": FABRIC_SERVER,
+                "FABRIC_DATABASE": FABRIC_DATABASE,
+                "FABRIC_TENANT_ID": FABRIC_TENANT_ID,
+                "FABRIC_WORKSPACE_ID": FABRIC_WORKSPACE_ID,
+                "FABRIC_EVENTHOUSE_ID": FABRIC_EVENTHOUSE_ID,
+                "FABRIC_PIPELINE_ID": FABRIC_PIPELINE_ID,
+            }.items() if not val
+        ]
+
+        if missing:
+            raise RuntimeError(f"Fabric execution mode is active but missing required configuration variables: {', '.join(missing)}")
+
         self.credential = AzureCliCredential(
             tenant_id=FABRIC_TENANT_ID
         )
@@ -237,8 +240,8 @@ class FabricProvider(DataProvider):
 
             url = (
                 "https://api.fabric.microsoft.com/v1/"
-                "workspaces/040d76ee-b4f1-4f6b-95fb-2306d20f8e77/"
-                "items/9544e045-6914-49b8-92ca-56cb8cd64185/"
+                f"workspaces/{FABRIC_WORKSPACE_ID}/"
+                f"items/{FABRIC_PIPELINE_ID}/"
                 "jobs/instances?jobType=Pipeline"
             )
 

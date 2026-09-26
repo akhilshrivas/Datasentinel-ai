@@ -1,77 +1,37 @@
 import pytest
-from unittest.mock import patch, MagicMock
-from langchain_core.messages import AIMessage
-from agents.orchestrator import investigate_incident
+from agents.orchestrator import route_query, investigate_incident
 
-def test_successful_evidence_based_response():
-    mock_llm = MagicMock()
-    mock_llm.bind_tools.return_value = mock_llm
-    mock_llm.invoke.side_effect = [
-        AIMessage(content="", tool_calls=[{"name": "get_anomalies_tool", "args": {}, "id": "1"}]),
-        AIMessage(content="The tool found an anomaly with value -15.5.")
-    ]
-    with patch("agents.orchestrator.get_llm") as mock_get_llm:
-        mock_get_llm.return_value = mock_llm
-        result = investigate_incident("Why did revenue drop yesterday?")
-        reply = result["reply"]
-        assert "I should call" not in reply
-        assert "Wait" not in reply
-        assert "-15.5" in reply or "15.5" in reply
-        assert len(result["tool_calls"]) > 0
+def test_deterministic_routing_pipeline():
+    # Should route strictly to pipeline tool
+    route = route_query("What happened in the latest pipeline run?")
+    assert route is not None
+    assert route["tool_name"] == "get_pipeline_status_tool"
 
-def test_insufficient_evidence():
-    mock_llm = MagicMock()
-    mock_llm.bind_tools.return_value = mock_llm
-    # Simulate the model outputting something that gets caught by the fallback
-    mock_llm.invoke.side_effect = [
-        AIMessage(content="", tool_calls=[{"name": "get_anomalies_tool", "args": {}, "id": "1"}]),
-        AIMessage(content="There are no_anomalies found.")
-    ]
-    with patch("agents.orchestrator.get_llm") as mock_get_llm:
-        mock_get_llm.return_value = mock_llm
-        result = investigate_incident("Why did revenue drop yesterday?")
-        reply = result["reply"]
-        assert "insufficient to determine the root cause" in reply.lower()
-        assert "I should call" not in reply
+def test_deterministic_routing_anomalies():
+    # Should route strictly to anomaly tool
+    route = route_query("How many anomalies are present?")
+    assert route is not None
+    assert route["tool_name"] == "get_anomalies_tool"
 
-def test_no_hallucinated_metrics():
-    mock_llm = MagicMock()
-    mock_llm.bind_tools.return_value = mock_llm
-    mock_llm.invoke.side_effect = [
-        AIMessage(content="", tool_calls=[{"name": "get_anomalies_tool", "args": {}, "id": "1"}]),
-        AIMessage(content="The metric value is 5.0")
-    ]
-    with patch("agents.orchestrator.get_llm") as mock_get_llm:
-        mock_get_llm.return_value = mock_llm
-        result = investigate_incident("Why did revenue drop yesterday?")
-        reply = result["reply"]
-        assert "20%" not in reply
-        assert "1000" not in reply
-        assert "5.0" in reply or "5" in reply
+def test_deterministic_routing_metrics():
+    # Should route strictly to revenue/metrics tool
+    route = route_query("Show me the recent revenue trend.")
+    assert route is not None
+    assert route["tool_name"] == "get_revenue_and_metrics_tool"
 
-def test_stale_pipeline_metadata():
-    mock_llm = MagicMock()
-    mock_llm.bind_tools.return_value = mock_llm
-    mock_llm.invoke.side_effect = [
-        AIMessage(content="", tool_calls=[{"name": "check_data_freshness_tool", "args": {"anomaly_timestamp": "2023-10-25T10:00:00Z"}, "id": "1"}]),
-        AIMessage(content="The pipeline is STALE. The last run was 2023-10-24.")
-    ]
-    with patch("agents.orchestrator.get_llm") as mock_get_llm:
-        mock_get_llm.return_value = mock_llm
-        result = investigate_incident("Check if the data is fresh for the 2023-10-25 anomaly.")
-        reply = result["reply"]
-        assert "STALE" in reply or "stale" in reply.lower()
-        assert "2023-10-24" in reply
+def test_investigate_incident_deterministic_pipeline():
+    # Mocking or expecting native deterministic response without LLM
+    result = investigate_incident("What happened in the latest pipeline run?")
+    assert "reply" in result
+    assert "tool_calls" in result
+    assert len(result["tool_calls"]) == 1
+    assert result["tool_calls"][0]["name"] == "get_pipeline_status_tool"
+    assert "<think>" not in result["reply"]
 
-def test_anomaly_pipeline_timestamp_mismatch():
-    mock_llm = MagicMock()
-    mock_llm.bind_tools.return_value = mock_llm
-    mock_llm.invoke.side_effect = [
-        AIMessage(content="", tool_calls=[{"name": "check_data_freshness_tool", "args": {"anomaly_timestamp": "2023-10-25T10:00:00Z"}, "id": "1"}]),
-        AIMessage(content="The pipeline is FRESH.")
-    ]
-    with patch("agents.orchestrator.get_llm") as mock_get_llm:
-        mock_get_llm.return_value = mock_llm
-        result = investigate_incident("Is the data fresh for the 2023-10-25 anomaly?")
-        reply = result["reply"]
-        assert "FRESH" in reply or "fresh" in reply.lower()
+def test_investigate_incident_deterministic_anomalies():
+    result = investigate_incident("How many anomalies are present?")
+    assert "reply" in result
+    assert "tool_calls" in result
+    assert len(result["tool_calls"]) == 1
+    assert result["tool_calls"][0]["name"] == "get_anomalies_tool"
+    assert "<think>" not in result["reply"]

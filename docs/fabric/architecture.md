@@ -78,4 +78,4 @@ graph TD
 
 The abstraction boundary exists in pps/api/data_provider.py. The DataProvider interface ensures that the FastAPI application and the LangGraph agent never hardcode SQL syntax specific to DuckDB or Fabric.
 
-When EXECUTION_MODE=fabric, the application communicates via Semantic Link or the SQL Analytics Endpoint, abstracting away the underlying OneLake Delta tables.
+When EXECUTION_MODE=fabric, the application communicates via the PyODBC SQL Analytics Endpoint, abstracting away the underlying OneLake Delta tables.
