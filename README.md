@@ -2,13 +2,13 @@
 
 DataPulse AI (formerly DataSentinel) is an intelligent data-platform operations console powered by Agentic AI. It provides a centralized dashboard and AI-driven investigation tool to monitor data pipelines, track anomalies, measure data quality, and visualize data lineage across enterprise architectures.
 
-## 🚀 Key Features
+## Key Features
 - **AI-Powered Investigations**: Ask natural language questions (e.g., "What happened in the latest pipeline run?") and get deterministic, actionable answers.
 - **Data Lineage Graph**: Interactive visualization of data flowing from Source → Bronze → Silver → Gold layers, including real-time event streams.
 - **Real-Time Anomaly Detection**: Monitor event streams and identify detected anomalies instantly.
 - **Data Quality Gates**: Track table-level data quality constraints (PK violations, nulls, duplicates) in real-time.
 
-## 🛠️ Tech Stack
+## Tech Stack
 ### Frontend
 - **React 19** & **Vite**: Ultra-fast UI rendering.
 - **Lucide-React** & **Recharts**: Modern iconography and interactive telemetry charts.
@@ -23,7 +23,7 @@ DataPulse AI (formerly DataSentinel) is an intelligent data-platform operations 
 - **Microsoft Fabric (Production)**: Native integration with Fabric Lakehouse (Delta), Eventstream, Eventhouse (KQL), and Data Factory via PyODBC and Azure Entra ID.
 - **DuckDB (Local Dev)**: Fallback local execution mode using Polars and Parquet files for offline zero-cost development.
 
-## ⚙️ Quick Start
+## Quick Start
 
 ### 1. Environment Setup
 Configure your environment variables. Ensure no secrets are hardcoded.

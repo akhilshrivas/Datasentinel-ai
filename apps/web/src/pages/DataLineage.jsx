@@ -31,16 +31,16 @@ const DataLineage = () => {
     setError(null);
     try {
       const res = await api.getLineage();
-      if (res && res.error) {
-        setError(res.error);
+      if (res && typeof res.error === 'string') {
+        setError(res.error || "Failed to load lineage data");
         setData({ nodes: [], edges: [] });
-      } else if (res && res.nodes) {
+      } else if (res && Array.isArray(res.nodes) && Array.isArray(res.edges)) {
         setData(res);
       } else {
         setError("Invalid lineage data received");
       }
     } catch (err) {
-      setError(err.message);
+      setError(err.response?.data?.detail || err.message || "Failed to load lineage data");
     } finally {
       setLoading(false);
     }

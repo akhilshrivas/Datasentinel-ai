@@ -8,6 +8,10 @@ import requests
 from azure.identity import AzureCliCredential
 
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 EXECUTION_MODE = os.environ.get("EXECUTION_MODE", "local").lower()
 
 FABRIC_SERVER = os.environ.get("FABRIC_SERVER")
@@ -17,6 +21,92 @@ FABRIC_WORKSPACE_ID = os.environ.get("FABRIC_WORKSPACE_ID")
 FABRIC_EVENTHOUSE_ID = os.environ.get("FABRIC_EVENTHOUSE_ID")
 FABRIC_KQL_DATABASE = os.environ.get("FABRIC_KQL_DATABASE")
 FABRIC_PIPELINE_ID = os.environ.get("FABRIC_PIPELINE_ID")
+
+PIPELINE_TABLES = [
+    'bronze_customers', 'bronze_products', 'bronze_orders', 'bronze_order_items', 'bronze_payments', 'bronze_events', 'bronze_inventory',
+    'silver_customers', 'silver_products', 'silver_orders', 'silver_order_items', 'silver_payments', 'silver_events', 'silver_inventory',
+    'daily_revenue', 'daily_orders', 'customer_metrics', 'product_metrics', 'inventory_metrics'
+]
+
+PIPELINE_EDGES = [
+    {"source": "src_crm", "target": "bronze_customers"},
+    {"source": "src_ecommerce", "target": "bronze_orders"},
+    {"source": "src_ecommerce", "target": "bronze_order_items"},
+    {"source": "src_ecommerce", "target": "bronze_payments"},
+    {"source": "src_ecommerce", "target": "bronze_products"},
+    {"source": "src_inventory", "target": "bronze_inventory"},
+    {"source": "src_events", "target": "bronze_events"},
+    
+    {"source": "bronze_customers", "target": "silver_customers"},
+    {"source": "bronze_products", "target": "silver_products"},
+    {"source": "bronze_orders", "target": "silver_orders"},
+    {"source": "bronze_order_items", "target": "silver_order_items"},
+    {"source": "bronze_payments", "target": "silver_payments"},
+    {"source": "bronze_events", "target": "silver_events"},
+    {"source": "bronze_inventory", "target": "silver_inventory"},
+    
+    {"source": "silver_orders", "target": "daily_revenue"},
+    {"source": "silver_payments", "target": "daily_revenue"},
+    {"source": "silver_orders", "target": "daily_orders"},
+    {"source": "silver_customers", "target": "customer_metrics"},
+    {"source": "silver_orders", "target": "customer_metrics"},
+    {"source": "silver_products", "target": "product_metrics"},
+    {"source": "silver_order_items", "target": "product_metrics"},
+    {"source": "silver_inventory", "target": "inventory_metrics"},
+    
+    {"source": "daily_revenue", "target": "api_metrics"},
+    {"source": "daily_orders", "target": "api_metrics"},
+    {"source": "customer_metrics", "target": "api_metrics"},
+    {"source": "product_metrics", "target": "api_metrics"},
+    {"source": "inventory_metrics", "target": "api_metrics"},
+    
+    {"source": "silver_customers", "target": "api_quality"},
+    {"source": "silver_products", "target": "api_quality"},
+    {"source": "silver_orders", "target": "api_quality"},
+    {"source": "silver_payments", "target": "api_quality"},
+    {"source": "silver_inventory", "target": "api_quality"},
+    
+    {"source": "src_events", "target": "fabric_eventstream"},
+    {"source": "fabric_eventstream", "target": "fabric_eventhouse"},
+    {"source": "fabric_eventhouse", "target": "api_anomalies"},
+]
+
+def build_lineage_graph(counts: Dict[str, Any] = None) -> Dict[str, Any]:
+    if counts is None:
+        counts = {}
+    nodes = [
+        {"id": "src_crm", "name": "CRM System", "layer": "Source", "status": "active", "entity": "source"},
+        {"id": "src_ecommerce", "name": "E-Commerce Web", "layer": "Source", "status": "active", "entity": "source"},
+        {"id": "src_inventory", "name": "Inventory App", "layer": "Source", "status": "active", "entity": "source"},
+        {"id": "src_events", "name": "Event Simulator", "layer": "Source", "status": "active", "entity": "source"},
+    ]
+    
+    for t in PIPELINE_TABLES:
+        if t.startswith('bronze_'):
+            layer = 'Bronze'
+        elif t.startswith('silver_'):
+            layer = 'Silver'
+        else:
+            layer = 'Gold'
+        val = counts.get(t, None)
+        nodes.append({
+            "id": t,
+            "name": t,
+            "layer": layer,
+            "status": "active" if val is not None else "unknown",
+            "entity": "table",
+            "rows": val
+        })
+        
+    nodes.extend([
+        {"id": "fabric_eventstream", "name": "Fabric Eventstream", "layer": "Real-time", "status": "active", "entity": "stream"},
+        {"id": "fabric_eventhouse", "name": "Fabric Eventhouse", "layer": "Real-time", "status": "active", "entity": "kql_db"},
+        {"id": "api_anomalies", "name": "Anomaly API", "layer": "Serving", "status": "active", "entity": "api"},
+        {"id": "api_metrics", "name": "Metrics API", "layer": "Serving", "status": "active", "entity": "api"},
+        {"id": "api_quality", "name": "Quality API", "layer": "Serving", "status": "active", "entity": "api"},
+    ])
+    
+    return {"nodes": nodes, "edges": PIPELINE_EDGES}
 
 
 class DataProvider:
@@ -32,9 +122,8 @@ class DataProvider:
     def get_anomalies(self, limit: int = 50) -> List[Dict[str, Any]]:
         raise NotImplementedError
 
-
     def get_lineage(self) -> Dict[str, Any]:
-        raise NotImplementedError
+        return build_lineage_graph({})
 
     def get_metrics(self, limit: int = 30) -> List[Dict[str, Any]]:
         raise NotImplementedError
@@ -110,19 +199,57 @@ class LocalDuckDBProvider(DataProvider):
             """
         )
 
-
     def get_lineage(self) -> Dict[str, Any]:
-        raise NotImplementedError
+        counts = {}
+        try:
+            con = duckdb.connect(self.db_path)
+            for t in PIPELINE_TABLES:
+                try:
+                    res = con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()
+                    counts[t] = res[0] if res else None
+                except Exception:
+                    counts[t] = None
+            con.close()
+        except Exception as e:
+            logger.warning(f"DuckDB Lineage Connection Error: {e}")
+        return build_lineage_graph(counts)
 
-    def get_metrics(self, limit: int = 30) -> List[Dict[str, Any]]:
-        return self._execute(
-            f"""
-            SELECT *
-            FROM product_metrics
-            ORDER BY date DESC
-            LIMIT {limit}
-            """
-        )
+    def get_metrics(self, limit: int = 30) -> Dict[str, Any]:
+        try:
+            trend_res = self._execute(
+                f"""
+                SELECT
+                    strftime(date, '%Y-%m-%d') as date,
+                    order_count as orders,
+                    revenue,
+                    ROUND(revenue / NULLIF(order_count, 0), 2) as average_order_value
+                FROM daily_revenue
+                ORDER BY date DESC
+                LIMIT {limit}
+                """
+            )
+            if not trend_res:
+                return {"kpis": {}, "trend": []}
+
+            total_orders = sum(row.get('orders', 0) or 0 for row in trend_res)
+            total_revenue = sum(float(row.get('revenue', 0.0) or 0.0) for row in trend_res)
+            avg_order_value = (total_revenue / total_orders) if total_orders else 0
+            min_date = min(str(row['date']) for row in trend_res)
+            max_date = max(str(row['date']) for row in trend_res)
+
+            return {
+                "kpis": {
+                    "total_orders": total_orders,
+                    "total_revenue": total_revenue,
+                    "average_order_value": avg_order_value,
+                    "unique_customers": 0,
+                    "period_label": f"{min_date} to {max_date}"
+                },
+                "trend": trend_res
+            }
+        except Exception as e:
+            logger.warning(f"DuckDB Metrics Error: {e}")
+            return {"kpis": {}, "trend": []}
 
 
 class FabricProvider(DataProvider):
@@ -136,22 +263,37 @@ class FabricProvider(DataProvider):
     SQL_COPT_SS_ACCESS_TOKEN = 1256
 
     def __init__(self):
-        missing = [
+        self.server = os.environ.get("FABRIC_SERVER") or FABRIC_SERVER
+        self.database = os.environ.get("FABRIC_DATABASE") or FABRIC_DATABASE
+        self.tenant_id = os.environ.get("FABRIC_TENANT_ID") or FABRIC_TENANT_ID
+        self.workspace_id = os.environ.get("FABRIC_WORKSPACE_ID") or FABRIC_WORKSPACE_ID
+        self.eventhouse_id = os.environ.get("FABRIC_EVENTHOUSE_ID") or FABRIC_EVENTHOUSE_ID
+        self.kql_database = os.environ.get("FABRIC_KQL_DATABASE") or FABRIC_KQL_DATABASE
+        self.pipeline_id = os.environ.get("FABRIC_PIPELINE_ID") or FABRIC_PIPELINE_ID
+
+        missing_sql = [
             var for var, val in {
-                "FABRIC_SERVER": FABRIC_SERVER,
-                "FABRIC_DATABASE": FABRIC_DATABASE,
-                "FABRIC_TENANT_ID": FABRIC_TENANT_ID,
-                "FABRIC_WORKSPACE_ID": FABRIC_WORKSPACE_ID,
-                "FABRIC_EVENTHOUSE_ID": FABRIC_EVENTHOUSE_ID,
-                "FABRIC_PIPELINE_ID": FABRIC_PIPELINE_ID,
+                "FABRIC_SERVER": self.server,
+                "FABRIC_DATABASE": self.database,
+                "FABRIC_TENANT_ID": self.tenant_id,
             }.items() if not val
         ]
 
-        if missing:
-            raise RuntimeError(f"Fabric execution mode is active but missing required configuration variables: {', '.join(missing)}")
+        if missing_sql:
+            raise RuntimeError(f"Fabric execution mode is active but missing required SQL configuration: {', '.join(missing_sql)}")
+
+        missing_optional = [
+            var for var, val in {
+                "FABRIC_WORKSPACE_ID": self.workspace_id,
+                "FABRIC_EVENTHOUSE_ID": self.eventhouse_id,
+                "FABRIC_PIPELINE_ID": self.pipeline_id,
+            }.items() if not val
+        ]
+        if missing_optional:
+            logger.warning(f"Fabric optional service variables missing: {', '.join(missing_optional)}. Pipeline and Eventhouse API telemetry will be unavailable.")
 
         self.credential = AzureCliCredential(
-            tenant_id=FABRIC_TENANT_ID
+            tenant_id=self.tenant_id
         )
 
     def _connection(self):
@@ -168,8 +310,8 @@ class FabricProvider(DataProvider):
 
         connection_string = (
             "DRIVER={ODBC Driver 18 for SQL Server};"
-            f"SERVER={FABRIC_SERVER};"
-            f"DATABASE={FABRIC_DATABASE};"
+            f"SERVER={self.server};"
+            f"DATABASE={self.database};"
             "Encrypt=yes;"
             "TrustServerCertificate=no;"
         )
@@ -417,116 +559,29 @@ class FabricProvider(DataProvider):
 
 
     def get_lineage(self) -> Dict[str, Any]:
+        counts = {}
+        conn = None
         try:
-            tables = [
-                'bronze_customers', 'bronze_products', 'bronze_orders', 'bronze_order_items', 'bronze_payments', 'bronze_events', 'bronze_inventory',
-                'silver_customers', 'silver_products', 'silver_orders', 'silver_order_items', 'silver_payments', 'silver_events', 'silver_inventory',
-                'daily_revenue', 'daily_orders', 'customer_metrics', 'product_metrics', 'inventory_metrics'
-            ]
-            
-            counts = {}
-            conn = None
-            try:
-                conn = self._connection()
-                conn.timeout = 30
-                cursor = conn.cursor()
-                for t in tables:
-                    try:
-                        cursor.execute(f"SELECT COUNT(*) FROM dbo.{t}")
-                        res = cursor.fetchone()
-                        counts[t] = res[0] if res else None
-                    except Exception as loop_e:
-                        print(f"Failed to fetch count for {t}: {loop_e}")
-                        counts[t] = None
-            except Exception as e:
-                print(f"Fabric Lineage Connection Error: {e}")
-            finally:
-                if conn:
-                    try:
-                        conn.close()
-                    except:
-                        pass
-                
-            nodes = [
-                {"id": "src_crm", "name": "CRM System", "layer": "Source", "status": "active", "entity": "source"},
-                {"id": "src_ecommerce", "name": "E-Commerce Web", "layer": "Source", "status": "active", "entity": "source"},
-                {"id": "src_inventory", "name": "Inventory App", "layer": "Source", "status": "active", "entity": "source"},
-                {"id": "src_events", "name": "Event Simulator", "layer": "Source", "status": "active", "entity": "source"},
-            ]
-            
-            for t in tables:
-                if t.startswith('bronze_'):
-                    layer = 'Bronze'
-                elif t.startswith('silver_'):
-                    layer = 'Silver'
-                else:
-                    layer = 'Gold'
-                val = counts.get(t, None)
-                nodes.append({
-                    "id": t,
-                    "name": t,
-                    "layer": layer,
-                    "status": "active" if val is not None else "unknown",
-                    "entity": "table",
-                    "rows": val
-                })
-                
-            nodes.extend([
-                {"id": "fabric_eventstream", "name": "Fabric Eventstream", "layer": "Real-time", "status": "active", "entity": "stream"},
-                {"id": "fabric_eventhouse", "name": "Fabric Eventhouse", "layer": "Real-time", "status": "active", "entity": "kql_db"},
-                {"id": "api_anomalies", "name": "Anomaly API", "layer": "Serving", "status": "active", "entity": "api"},
-                {"id": "api_metrics", "name": "Metrics API", "layer": "Serving", "status": "active", "entity": "api"},
-                {"id": "api_quality", "name": "Quality API", "layer": "Serving", "status": "active", "entity": "api"},
-            ])
-            
-            edges = [
-                {"source": "src_crm", "target": "bronze_customers"},
-                {"source": "src_ecommerce", "target": "bronze_orders"},
-                {"source": "src_ecommerce", "target": "bronze_order_items"},
-                {"source": "src_ecommerce", "target": "bronze_payments"},
-                {"source": "src_ecommerce", "target": "bronze_products"},
-                {"source": "src_inventory", "target": "bronze_inventory"},
-                {"source": "src_events", "target": "bronze_events"},
-                
-                {"source": "bronze_customers", "target": "silver_customers"},
-                {"source": "bronze_products", "target": "silver_products"},
-                {"source": "bronze_orders", "target": "silver_orders"},
-                {"source": "bronze_order_items", "target": "silver_order_items"},
-                {"source": "bronze_payments", "target": "silver_payments"},
-                {"source": "bronze_events", "target": "silver_events"},
-                {"source": "bronze_inventory", "target": "silver_inventory"},
-                
-                {"source": "silver_orders", "target": "daily_revenue"},
-                {"source": "silver_payments", "target": "daily_revenue"},
-                {"source": "silver_orders", "target": "daily_orders"},
-                {"source": "silver_customers", "target": "customer_metrics"},
-                {"source": "silver_orders", "target": "customer_metrics"},
-                {"source": "silver_products", "target": "product_metrics"},
-                {"source": "silver_order_items", "target": "product_metrics"},
-                {"source": "silver_inventory", "target": "inventory_metrics"},
-                
-                {"source": "daily_revenue", "target": "api_metrics"},
-                {"source": "daily_orders", "target": "api_metrics"},
-                {"source": "customer_metrics", "target": "api_metrics"},
-                {"source": "product_metrics", "target": "api_metrics"},
-                {"source": "inventory_metrics", "target": "api_metrics"},
-                
-                {"source": "silver_customers", "target": "api_quality"},
-                {"source": "silver_products", "target": "api_quality"},
-                {"source": "silver_orders", "target": "api_quality"},
-                {"source": "silver_payments", "target": "api_quality"},
-                {"source": "silver_inventory", "target": "api_quality"},
-                
-                {"source": "src_events", "target": "fabric_eventstream"},
-                {"source": "fabric_eventstream", "target": "fabric_eventhouse"},
-                {"source": "fabric_eventhouse", "target": "api_anomalies"},
-            ]
-            
-            return {"nodes": nodes, "edges": edges}
-            
+            conn = self._connection()
+            conn.timeout = 30
+            cursor = conn.cursor()
+            for t in PIPELINE_TABLES:
+                try:
+                    cursor.execute(f"SELECT COUNT(*) FROM dbo.{t}")
+                    res = cursor.fetchone()
+                    counts[t] = res[0] if res else None
+                except Exception as loop_e:
+                    logger.warning(f"Failed to fetch count for {t}: {loop_e}")
+                    counts[t] = None
         except Exception as e:
-            print(f"Fabric Lineage Error: {e}")
-            return {"nodes": [], "edges": []}
+            logger.warning(f"Fabric Lineage Connection Error: {e}")
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        return build_lineage_graph(counts)
 
     def get_metrics(self, limit: int = 30) -> Dict[str, Any]:
         try:
@@ -571,7 +626,8 @@ class FabricProvider(DataProvider):
 
 
 def get_data_provider() -> DataProvider:
-    if EXECUTION_MODE == "fabric":
+    mode = os.environ.get("EXECUTION_MODE", "local").lower()
+    if mode == "fabric":
         return FabricProvider()
 
     return LocalDuckDBProvider()

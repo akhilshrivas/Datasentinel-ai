@@ -1,9 +1,17 @@
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+import logging
 from fastapi import FastAPI, HTTPException
 import duckdb
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 import math
 import os
+
+logger = logging.getLogger("datasentinel.api")
 
 from apps.api.data_provider import get_data_provider
 
@@ -127,9 +135,17 @@ def get_platform_summary():
 @app.get("/lineage")
 def get_lineage():
     try:
-        return replace_nan(provider.get_lineage())
+        active_provider = get_data_provider()
+        lineage_data = active_provider.get_lineage()
+        if not isinstance(lineage_data, dict) or "nodes" not in lineage_data or "edges" not in lineage_data:
+            logger.error("Provider returned invalid lineage data shape: %s", type(lineage_data))
+            raise HTTPException(status_code=502, detail="Invalid lineage data received from data provider")
+        return replace_nan(lineage_data)
+    except HTTPException:
+        raise
     except Exception as e:
-        return {"error": str(e)}
+        logger.error(f"Error retrieving lineage data: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve lineage data")
 
 @app.get("/metrics")
 def get_metrics():

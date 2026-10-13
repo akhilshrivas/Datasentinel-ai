@@ -71,8 +71,8 @@ const AIInvestigation = () => {
                   {msg.role === 'user' ? 'op_admin@local' : 'agent@datasentinel'}
                 </span>
                 <span className='text-muted'>$</span>
-                <div style={{ marginTop: '8px', lineHeight: '1.6' }}>
-                  {msg.content}
+                <div style={{ marginTop: '8px', lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>
+                  {typeof msg.content === 'string' ? msg.content.replace(/\\n/g, '\n') : msg.content}
                 </div>
                 
                 {msg.toolCalls && msg.toolCalls.length > 0 && (
